@@ -1,0 +1,1194 @@
+Option Explicit
+Dim hsb, rfl, har As Boolean
+Dim rfl_wb, hsb_wb, har_wb, out_wb As Workbook
+Dim rfl_ws, hsb_ws, har_ws, oRfl_ws, oHsb_ws, oHar_ws, mapWs As Worksheet
+Dim ERROR_COUNT As Long
+Dim REGION, GO_LIVE, LEGACY_HSB, GO_LIVE_INSTANT, LEGACY_HAR, LEGACY_RFL As String
+'----------
+' NAME:         Main
+' DESCRIPTION:  The main driver to prepare the RFL, HSB, and HAR imports
+'               hsb, rfl, and har variables can be turned to false to not do that calculation
+'----------
+Sub Main()
+    
+    'Set these to process those parts
+    hsb = False 'True
+    rfl = False 'True
+    har = True 'True
+    
+    ERROR_COUNT = 0
+    'Get filenames
+    
+    'Set rfl_wb = Workbooks.Open(Application.ThisWorkbook.Sheets("user_input").Cells(3, "C").value)
+    'Set hsb_wb = Workbooks.Open(Application.ThisWorkbook.Sheets("user_input").Cells(4, "C").value)
+    'Set har_wb = Workbooks.Open(Application.ThisWorkbook.Sheets("user_input").Cells(5, "C").value)
+    'Set out_wb = Workbooks.Open(Application.ThisWorkbook.Sheets("user_input").Cells(6, "C").value)
+    Set rfl_ws = ThisWorkbook.Sheets("rfl_src") 'rfl_wb.Sheets(1)
+    Set hsb_ws = ThisWorkbook.Sheets("hsb_src") 'hsb_wb.Sheets(1)
+    Set har_ws = ThisWorkbook.Sheets("har_src") 'har_wb.Sheets(1)
+    Set oRfl_ws = ThisWorkbook.Sheets("rfl_out") 'rfl_wb.Sheets(1)
+    Set oHsb_ws = ThisWorkbook.Sheets("hsb_out") 'hsb_wb.Sheets(1)
+    Set oHar_ws = ThisWorkbook.Sheets("har_out") 'har_wb.Sheets(1)
+    Set mapWs = ThisWorkbook.Sheets("mapping")
+    
+    'Get Go-Live Date
+    GO_LIVE = ThisWorkbook.Sheets("user_input").Cells(2, "C").value
+    GO_LIVE_INSTANT = ThisWorkbook.Sheets("user_input").Cells(1, "C").value
+    REGION = ThisWorkbook.Sheets("user_input").Cells(7, "C").value
+    LEGACY_HSB = ThisWorkbook.Sheets("user_input").Cells(8, "C").value
+    LEGACY_HAR = ThisWorkbook.Sheets("user_input").Cells(9, "C").value
+    LEGACY_RFL = ThisWorkbook.Sheets("user_input").Cells(10, "C").value
+    
+    'Do RFL Work
+    If rfl Then
+        Call MainRFL
+    End If
+    'Do HSB Work
+    If hsb Then
+        Call MainHSB
+    End If
+    'Do HAR Work
+    If har Then
+        Call MainHAR
+    End If
+End Sub
+'----------
+' NAME:         MainHSB
+' DESCRIPTION:  The main driver to run the HSB import
+'----------
+Sub MainHSB()
+    
+    'Assume first relevant row is the second and first column is the first
+    Dim sourceRow, sourceCol, destRow, destCol As Long
+    sourceCol = 1   'Initalize start column of source to 1
+    sourceRow = 2   'Initialize start row of source to 3
+    destCol = 1     'Destination starts at 1
+    destRow = 5     'Same
+    
+    Dim destWs, sourceWs, mapWs As Worksheet
+    Set destWs = oHsb_ws
+    Set sourceWs = hsb_ws
+    Set mapWs = Application.ThisWorkbook.Sheets("mapping")
+    
+    Do While Len(sourceWs.Cells(sourceRow, "A").value) > 0
+        'Column A/Item 1: equal to destRow - instead of sourceRow because we can create multiple HSBs from here
+        destWs.Cells(destRow, "A").value = GetMPI(CStr(destRow), LEGACY_HSB)
+        'Column C/Item 50: equal to 1-Active
+        destWs.Cells(destRow, "C").value = 1
+        'Column D/Item 120: equal to 10 - Region Hovedstaden
+        destWs.Cells(destRow, "D").value = REGION
+        'Column E&F/Item 5000&5001: equal to LEGACY_HSB (xx) & Row #
+        destWs.Cells(destRow, "E").value = LEGACY_HSB
+        destWs.Cells(destRow, "F").value = destRow
+        'Column I/Item 24001: equal to PPID
+        destWs.Cells(destRow, "I").value = sourceWs.Cells(sourceRow, "A").value
+        'Column J/Item 24002: equal to 10 - Region Hovedstaden
+        destWs.Cells(destRow, "J").value = REGION
+        'Column K/Item 24102: equal to Go-Live!
+        destWs.Cells(destRow, "K").value = TranslateDates(sourceWs.Cells(sourceRow, "C").value, False)
+        'Column M/Item 24107: Henvsvisnings ID
+        If Len(sourceWs.Cells(sourceRow, "D").value) > 0 Then
+            destWs.Cells(destRow, "M").value = "{{EXTID}}" & sourceWs.Cells(sourceRow, "D").value
+        End If
+        'Column N/Item 24109: Initial RTT Status
+        If Len(sourceWs.Cells(sourceRow, "E").value) > 0 Then
+            destWs.Cells(destRow, "N").value = WaitStatusMap(CStr(Split(sourceWs.Cells(sourceRow, "E").value, "~")(0)))
+        End If
+        'Column O/Item 24160: Wait Status
+        Dim statusRange As Range
+        Dim outWStatus As String
+        Set statusRange = mapWs.Range("D3:D13")
+            outWStatus = TranslateList(sourceWs.Cells(sourceRow, "E").value, statusRange, mapWs, "E", Chr(10))
+        If Len(outWStatus) > 0 Then
+            destWs.Cells(destRow, "O").value = outWStatus
+        Else
+            destWs.Cells(destRow, "O").value = "1112"
+        End If
+        'Column P/Item 24161: Wait Status Start Instant
+        outWStatus = TranslateDates(sourceWs.Cells(sourceRow, "F").value, True, Chr(10))
+        If Len(outWStatus) > 0 Then
+            destWs.Cells(destRow, "P").value = outWStatus
+        Else
+            destWs.Cells(destRow, "P").value = GO_LIVE & "^0400"
+        End If
+        'Column Q/Item 24162: Wait Status Comment
+        destWs.Cells(destRow, "Q").value = Replace(sourceWs.Cells(sourceRow, "G").value, "~", Chr(10))
+                
+        'Column T/Item 100000: Patient (through CPR)
+        destWs.Cells(destRow, "T").value = GetCPR(sourceWs.Cells(sourceRow, "H").value)
+        'Column V/Item 100002: Procedure Code from source - done by hand for HGH
+        'Dim lastProcCode As Variant
+        'lastProcCode = Split(CStr(sourceWs.Cells(sourceRow, "I").value), "~")
+        'If UBound(lastProcCode) > 0 Then
+        '    destWs.Cells(destRow, "V").value = "{{EXTID}}" + lastProcCode(UBound(lastProcCode))
+        'End If
+        'Column W/Item 100003: Procedure Code from source
+        'Dim lastProcDate As Variant
+        'lastProcDate = Split(CStr(sourceWs.Cells(sourceRow, "J").value), "~")
+        'If UBound(lastProcDate) > 0 Then
+        '    destWs.Cells(destRow, "W").value = TranslateDates(lastProcDate(UBound(lastProcDate)), False, "")
+        'End If
+        
+        'Column B/Item 30: Pathway Type based on data
+        '   Can create multiple rows and then adds PPID (Column I) as the same
+        'Column U/Item 100001: "Y" for inital and "N" for remainder
+        Dim results As String
+        results = ""
+        Call FindPathwayPeriods(mapWs, sourceWs, sourceRow, results)
+        'Call AddPathwayPeriods - add the new rows created to our destRow value
+        destRow = destRow + AddPathwayPeriods(destWs, destRow, results)
+        
+        'Increment counter before going to next row
+        sourceRow = sourceRow + 1
+        destRow = destRow + 1
+    Loop
+    
+End Sub
+'----------
+' NAME:         MainRFL
+' DESCRIPTION:  The main driver to run the HSB import
+'----------
+Sub MainRFL()
+    'Assume first relevant row is the second and first column is the first
+    Dim sourceRow, sourceCol, destRow, destCol As Long
+    sourceCol = 1   'Initalize start column of source to 1
+    sourceRow = 2   'Initialize start row of source to 3
+    destCol = 1     'Destination starts at 1
+    destRow = 5     'Same
+    
+    Dim destWs, sourceWs, mapWs As Worksheet
+    Set destWs = oRfl_ws
+    Set sourceWs = rfl_ws
+    Set mapWs = Application.ThisWorkbook.Sheets("mapping")
+    
+    'Merge H/HA/HI and HF referrals
+    ' The only values that aren't on the H/HA/HI row are the Brev Ids/Letters and dates
+    Do While Len(sourceWs.Cells(sourceRow, "A").value) > 0 Or Len(sourceWs.Cells(sourceRow, "B").value) > 0
+        'Look at Forløb ID to find matches
+        Dim singleDup As Range
+        Dim prevDup As Range
+        Dim brevId, brevDato, henvisType As String
+        If Len(sourceWs.Cells(sourceRow, "U").value) <= 0 Then
+            sourceRow = sourceRow + 1
+        End If
+        'Find the first referral in the row for this forloeb
+        Set singleDup = sourceWs.Range("U:U").Find(What:=sourceWs.Cells(sourceRow, "U").value, LookIn:=xlValues, LookAt:=xlWhole, SearchOrder:=xlByRows)
+        If Not singleDup Is Nothing Then
+            henvisType = sourceWs.Cells(sourceRow, "J").value
+            If henvisType = "HF" Then
+                brevId = sourceWs.Cells(singleDup.row, "L").value
+                brevDato = sourceWs.Cells(singleDup.row, "K").value
+                Set prevDup = singleDup
+            ElseIf henvisType = "H" Or henvisType = "HA" Or henvisType = "HI" Then
+                Set prevDup = singleDup
+            Else
+                'If we don't have a referral type for the same Forloeb match, need an error.
+                Call LogError("RFL", sourceWs.Cells(sourceRow, "A").value & sourceWs.Cells(sourceRow, "B").value, "No valid henvisType of H, HA, HI, or HF to merge RFLs")
+            End If
+        End If
+        'Find the next referral with the same forloeb and sync the items
+        Set singleDup = sourceWs.Range("U:U").FindNext(sourceWs.Cells(singleDup.row, "U"))
+        If singleDup.row <> sourceRow Then
+            henvisType = sourceWs.Cells(singleDup.row, "J").value
+            If henvisType = "HF" Then
+                sourceWs.Cells(prevDup.row, "L").value = sourceWs.Cells(singleDup.row, "L").value
+                sourceWs.Cells(prevDup.row, "K").value = sourceWs.Cells(singleDup.row, "K").value
+                sourceWs.Cells(singleDup.row, "L").EntireRow.Delete
+            ElseIf henvisType = "H" Or henvisType = "HA" Or henvisType = "HI" Then
+                ' This means that there was a previous real RFL, so it needs the Brev info
+                sourceWs.Cells(singleDup.row, "L").value = brevId
+                sourceWs.Cells(singleDup.row, "K").value = brevDato
+                sourceWs.Cells(prevDup.row, "L").EntireRow.Delete
+            Else
+                Call LogError("RFL", sourceWs.Cells(singleDup.row, "A").value, "No valid henvisType of H, HA, HI, or HF")
+                sourceRow = sourceRow + 1
+            End If
+        End If
+        
+        'Remove all "G"/"M" diagnoses
+        Dim gmDiagnoses As Range
+        If FindValue("G", sourceWs.Range("Q" & sourceRow), gmDiagnoses) Or FindValue("M", sourceWs.Range("Q" & sourceRow), gmDiagnoses) Then
+            Dim gmAry, gmEDGAry, gmMODAry As Variant
+            Dim gmCount As Integer
+            Dim gmResultArt, gmResultEDG, gmResultMOD As String
+            gmResultEDG = ""
+            gmResultMOD = ""
+            gmResultArt = ""
+            gmAry = Split(sourceWs.Cells(sourceRow, "Q").value, "~")
+            gmEDGAry = Split(sourceWs.Cells(sourceRow, "P").value, "~")
+            gmMODAry = Split(sourceWs.Cells(sourceRow, "R").value, "~")
+            For gmCount = LBound(gmAry) To UBound(gmAry)
+                If Len(CStr(gmAry(gmCount))) <= 0 Then
+                    GoTo NextGMMulti
+                End If
+                If gmAry(gmCount) = "G" Or gmAry(gmCount) = "M" Then
+                    GoTo NextGMMulti
+                End If
+                If Len(gmResultArt) <= 0 Then
+                    gmResultArt = gmAry(gmCount)
+                    gmResultEDG = gmEDGAry(gmCount)
+                    gmResultMOD = gmMODAry(gmCount)
+                Else
+                    gmResultArt = gmResultArt + "~" + gmAry(gmCount)
+                    gmResultEDG = gmResultEDG + "~" + gmEDGAry(gmCount)
+                    gmResultMOD = gmResultMOD + "~" + gmMODAry(gmCount)
+                End If
+NextGMMulti:
+            Next
+            sourceWs.Cells(sourceRow, "Q").value = gmResultArt
+            sourceWs.Cells(sourceRow, "P").value = gmResultEDG
+            sourceWs.Cells(sourceRow, "R").value = gmResultMOD
+        End If
+        
+        
+        sourceRow = sourceRow + 1
+    Loop
+    
+    'Start again from our new set of rows
+    sourceRow = 2
+    Dim modRange As Range
+    'So we don't have to stop, we need to also make sure that the Kontakt ID/"B" isn't blank
+    Do While Len(sourceWs.Cells(sourceRow, "A").value) > 0 Or Len(sourceWs.Cells(sourceRow, "B").value) > 0
+        
+        Dim henvisMaode, byYder, bySgh As String
+        henvisMaode = sourceWs.Cells(sourceRow, "G").value
+        
+        'Go to the next row and log errors if we have no Henvisning ID or Henvisnig Type
+        If Len(sourceWs.Cells(sourceRow, "A").value) <= 0 Then
+            Call LogError("RFL", "Row " & sourceRow, "Not a referral (only kontakt ID present)")
+            sourceRow = sourceRow + 1
+        End If
+        If Len(henvisMaode) <= 0 Then
+            Call LogError("RFL", "Row " & sourceRow, "Missing a HenvisMåde")
+            sourceRow = sourceRow + 1
+        End If
+        
+        'Column A/Item 1: equal to the source Row.
+        destWs.Cells(destRow, "A").value = "{{EXTID}}" & sourceWs.Cells(sourceRow, "A").value
+        'Column B/Item 15: external ID (HenvisningId)
+        destWs.Cells(destRow, "B").value = sourceWs.Cells(sourceRow, "A").value
+        'Column C/Item 40: referred to location
+        destWs.Cells(destRow, "C").value = GetMPI(sourceWs.Cells(sourceRow, "C").value, 114)
+        
+        '???------------------------------
+        'Column D/Item 50: referral status
+        '??? There are no referrals without pathways, so it's always 1-Authorized
+        Dim outHar As Range
+        If Right(sourceWs.Cells(sourceRow, "J").value, 1) <> "H" Then
+            destWs.Cells(destRow, "D").value = "8"
+        Else
+            destWs.Cells(destRow, "D").value = "1"
+        End If
+        'Column E/Item 80: referral status
+        destWs.Cells(destRow, "E").value = "1"
+        'Column F/Item 100: CPR
+        destWs.Cells(destRow, "F").value = GetCPR(sourceWs.Cells(sourceRow, "D").value)
+        
+        'Referred by logic depends on HenvisMaode
+        byYder = sourceWs.Cells(sourceRow, "E").value
+        bySgh = sourceWs.Cells(sourceRow, "F").value
+        ' For a referred by provider referral with no provider, add a default
+        If (henvisMaode = "PL" Or henvisMaode = "PS") And Len(byYder) <= 0 Then
+            byYder = "DEFAULT_YDER"
+        ' For a referred by sygehus with no hospital, add the referred to hospital
+        ElseIf henvisMaode = "HV" Or henvisMaode = "HS" Then
+            bySgh = sourceWs.Cells(sourceRow, "C").value
+        ' For an "Anden," add the referred to hospital
+        ElseIf henvisMaode = "AN" Then
+            bySgh = "DEFAULT_ANDEN"
+        Else
+            Call LogError("RFL;300/310", sourceWs.Cells(sourceRow, "A").value, "Referral Mode unidentifiable")
+        End If
+        'Column G/Item 300: Referred by Prov?
+        If Len(byYder) > 0 Then
+            destWs.Cells(destRow, "G").value = "{{SERID}}" + byYder + ",-1,137"
+        End If
+        'Column H/Item 310: Referred by Location
+        If Len(bySgh) > 0 Then
+            destWs.Cells(destRow, "H").value = GetMPI(bySgh, 114)
+        End If
+        If Len(byYder) <= 0 And Len(bySgh) <= 0 Then
+            Call LogError("RFL;300/310", sourceWs.Cells(sourceRow, "A").value, "Missing both referring provider and location. This will fail.")
+        End If
+        'Column I/Item 420: Referral Class - Incoming
+        destWs.Cells(destRow, "I").value = "2"
+        'Column J/Item 430: Referral Type - 113-Converted
+        destWs.Cells(destRow, "J").value = "113"
+        'Column K/Item 901: Referral Source Type
+        destWs.Cells(destRow, "K").value = RefSrcTypeMap(henvisMaode)
+        'Column L/Item 910: Referring Method - 1-Electronic
+        destWs.Cells(destRow, "L").value = "1"
+        'Column N/Item 931: Transportation?
+        destWs.Cells(destRow, "N").value = TransMap(sourceWs.Cells(sourceRow, "H").value)
+        'Column O/Item 932: Referral Time
+        destWs.Cells(destRow, "O").value = "00:00:00"
+        'Column P/Item 933: Referral Diagnosis
+        If Len(sourceWs.Cells(sourceRow, "I").value) > 0 Then
+            destWs.Cells(destRow, "P").value = "{{EXTID}}" + sourceWs.Cells(sourceRow, "I").value
+        Else
+            destWs.Cells(destRow, "P").value = "{{EXTID}}" + "DEFAULT_EDG"
+        End If
+        'Column Q/Item 934: Referral Treatment Type - defaulted
+        destWs.Cells(destRow, "Q").value = 3
+        'Column R/Item 935: Encounter Type
+        ' If we have an A/F, it's ambulatory, else it's inpatient
+        destWs.Cells(destRow, "R").value = EncounterTypeMap(sourceWs.Cells(sourceRow, "J").value)
+        'Column T/Item 937: Referral Diagnosis Modifiers
+        destWs.Cells(destRow, "T").value = MultiResp(sourceWs.Cells(sourceRow, "M").value, "^", Chr(10))
+        'Column U/Item 940: Referred by Prov CC
+        If Len(sourceWs.Cells(sourceRow, "N").value) > 0 Then
+            destWs.Cells(destRow, "U").value = GetMPI(sourceWs.Cells(sourceRow, "N").value, 114)
+        End If
+        'Column V/Item 941: Referred by Location CC
+        If Len(sourceWs.Cells(sourceRow, "O").value) > 0 Then
+            destWs.Cells(destRow, "V").value = GetMPI(sourceWs.Cells(sourceRow, "O").value, 137)
+        End If
+        'Column X/Item 1000: Other Diagnoses Codes
+        destWs.Cells(destRow, "X").value = MultiResp(sourceWs.Cells(sourceRow, "P").value, "~", Chr(10), "{{EXTID}}")
+        'Column Y/Item 1001: Diagnoses Modifiers
+        destWs.Cells(destRow, "Y").value = RelatedMultiResp(sourceWs.Cells(sourceRow, "R").value, "~", "^", Chr(10), ";", "")
+        'Column  Z/Item 1002: Diagnosis Modifier Type
+        Set modRange = mapWs.Range("P4:P1000")
+        destWs.Cells(destRow, "Z").value = TranslateList(sourceWs.Cells(sourceRow, "Q").value, modRange, mapWs, "Q", Chr(10))
+        'Column Z/Item 4005: Referred on Date
+        destWs.Cells(destRow, "AA").value = TranslateDates(sourceWs.Cells(sourceRow, "S").value)
+        'Column AD/Item 18999: Notes
+        destWs.Cells(destRow, "AE").value = sourceWs.Cells(sourceRow, "T").value
+        
+        'Increment counts
+        destRow = destRow + 1
+LoopRFL:
+        sourceRow = sourceRow + 1
+    Loop
+End Sub
+
+Sub MainHAR()
+    'Assume first relevant row is the second and first column is the first
+    Dim sourceRow, sourceCol, destRow, destCol As Long
+    sourceCol = 1   'Initalize start column of source to 1
+    sourceRow = 2   'Initialize start row of source to 2
+    destCol = 1     'Destination starts at 1
+    destRow = 5     'Same
+    
+    Dim destWs, sourceWs, mapWs As Worksheet
+    Set destWs = oHar_ws
+    Set sourceWs = har_ws
+    Set mapWs = Application.ThisWorkbook.Sheets("mapping")
+    
+    Dim kontaktType, behAnsvar, preBehAnsvar, rfl_id As String
+    
+    'Merge H/HA/HI/HF kontakts with the main kontakt
+    ' Look over all Forløb Ids and see if there is another field with the same forløb
+    ' If this is true and the kontaktAnsvar is the same, then we can combine them.
+    ' If they are different, two different kontakts should be created.
+    ' If they are the same, we have to copy the Henvisnings Id from the older one
+    Do While Len(sourceWs.Cells(sourceRow, "A").value) > 0
+        'Look at Forløb ID to find matches
+        Dim singleDup As Range
+        Dim prevDup As Range
+        If Len(sourceWs.Cells(sourceRow, "L").value) <= 0 Then
+            sourceRow = sourceRow + 1
+        End If
+        'Find the first kontakt in the row for this forloeb
+        Set singleDup = sourceWs.Range("L:L").Find(What:=sourceWs.Cells(sourceRow, "L").value, LookIn:=xlValues, LookAt:=xlWhole, SearchOrder:=xlByRows)
+        If Not singleDup Is Nothing Then
+            kontaktType = sourceWs.Cells(singleDup.row, "A").value
+            preBehAnsvar = sourceWs.Cells(singleDup.row, "I").value
+            If Left(kontaktType, 1) = "H" Or kontaktType = "HF" Then
+                rfl_id = sourceWs.Cells(sourceRow, "M").value
+                Set prevDup = singleDup
+            Else
+                Set prevDup = singleDup
+            End If
+        End If
+        'Find the next kontakt with the same forloeb and sync the items
+        Set singleDup = sourceWs.Range("L:L").FindNext(sourceWs.Cells(singleDup.row, "L"))
+        If singleDup.row <> sourceRow Then
+            kontaktType = sourceWs.Cells(singleDup.row, "A").value
+            behAnsvar = sourceWs.Cells(singleDup.row, "I").value
+            If (Left(kontaktType, 1) = "H" Or kontaktType = "HF") And behAnsvar = preBehAnsvar Then
+                sourceWs.Cells(prevDup.row, "M").value = sourceWs.Cells(singleDup.row, "M").value
+                sourceWs.Cells(singleDup.row, "L").EntireRow.Delete
+            ElseIf (Left(kontaktType, 1) = "H" Or kontaktType = "HF") And behAnsvar <> preBehAnsvar Then
+                Call LogError("HAR", "HSB: " & sourceWs.Cells(singleDup.row, "L").value, "Two kontakts exist with the same forloeb but different Behandlings Ansvar - investigate")
+            Else
+                ' This means that there was a previous real RFL, so it needs the Brev info
+                sourceWs.Cells(singleDup.row, "M").value = rfl_id
+                sourceWs.Cells(prevDup.row, "L").EntireRow.Delete
+            End If
+        End If
+        
+        'Remove all "G"/"M" diagnoses
+        Dim gmDiagnoses As Range
+        Dim hDiagnoses As String
+        Dim hError As Boolean
+        If FindValue("G", sourceWs.Range("D" & sourceRow), gmDiagnoses) Or FindValue("M", sourceWs.Range("D" & sourceRow), gmDiagnoses) Or FindValue("H", sourceWs.Range("D" & sourceRow), gmDiagnoses) Then
+            Dim gmAry, gmEDGAry, gmMODAry As Variant
+            Dim gmCount As Integer
+            Dim gmResultArt, gmResultEDG, gmResultMOD As String
+            gmResultEDG = ""
+            gmResultMOD = ""
+            gmResultArt = ""
+            gmAry = Split(sourceWs.Cells(sourceRow, "D").value, "~")
+            gmEDGAry = Split(sourceWs.Cells(sourceRow, "C").value, "~")
+            gmMODAry = Split(sourceWs.Cells(sourceRow, "E").value, "~")
+            For gmCount = LBound(gmAry) To UBound(gmAry)
+                If Len(CStr(gmAry(gmCount))) <= 0 Then
+                    GoTo NextGMMulti
+                End If
+                If gmAry(gmCount) = "G" Or gmAry(gmCount) = "M" Then
+                    GoTo NextGMMulti
+                ElseIf gmAry(gmCount) = "H" Then
+                    If Len(hDiagnoses) <= 0 Then
+                        hDiagnoses = gmEDGAry(gmCount)
+                    Else
+                        If hDiagnoses <> gmEDGAry(gmCount) Then
+                            hError = True
+                            hDiagnoses = gmEDGAry(gmCount)
+                        Else
+                            hDiagnoses = gmEDGAry(gmCount)
+                        End If
+                    End If
+                    GoTo NextGMMulti
+                End If
+                If Len(gmResultArt) <= 0 Then
+                    gmResultArt = gmAry(gmCount)
+                    gmResultEDG = gmEDGAry(gmCount)
+                    gmResultMOD = gmMODAry(gmCount)
+                Else
+                    gmResultArt = gmResultArt + "~" + gmAry(gmCount)
+                    gmResultEDG = gmResultEDG + "~" + gmEDGAry(gmCount)
+                    gmResultMOD = gmResultMOD + "~" + gmMODAry(gmCount)
+                End If
+NextGMMulti:
+            Next
+            'If this cell has H-Diagnoses that don't match, add an investigation value
+            If hError Then
+                sourceWs.Cells(sourceRow, "Z").value = "MULTIPLE_H_EDG"
+            ElseIf Len(hDiagnoses) > 0 Then
+                sourceWs.Cells(sourceRow, "Z").value = hDiagnoses
+            End If
+            sourceWs.Cells(sourceRow, "D").value = gmResultArt
+            sourceWs.Cells(sourceRow, "C").value = gmResultEDG
+            sourceWs.Cells(sourceRow, "E").value = gmResultMOD
+        End If
+        
+        
+        sourceRow = sourceRow + 1
+    Loop
+    
+    'Start again from our new set of rows
+    sourceRow = 2
+    
+    Dim kontaktId, payComment, opHold As String
+    Do While Len(sourceWs.Cells(sourceRow, "A").value) > 0
+        'I kontakts are not converted
+        kontaktType = sourceWs.Cells(sourceRow, "A").value
+        If kontaktType = "I" Then
+            GoTo NextHAR
+        End If
+        'Column A/Item 1: equal to old Kontakt ID, otherwise row number
+        kontaktId = sourceWs.Cells(sourceRow, "X").value
+        If Len(kontaktId) > 0 Then
+            destWs.Cells(destRow, "A").value = GetMPI(CStr(kontaktId), LEGACY_HAR)
+        Else
+            destWs.Cells(destRow, "A").value = GetMPI(CStr(sourceRow), LEGACY_HAR)
+        End If
+        'Column B/Item 50: Account Class
+        destWs.Cells(destRow, "B").value = AcctClassMap(kontaktType)
+        'Column C/Item 100: Patient ID
+        destWs.Cells(destRow, "C").value = GetCPR(sourceWs.Cells(sourceRow, "B").value)
+        'Column D/Item 610: Diagnosis
+        destWs.Cells(destRow, "D").value = MultiResp(sourceWs.Cells(sourceRow, "C").value, "~", Chr(10), "{{EXTID}}")
+        'Column E/Item 725: Diagnosis Type
+        Dim modRange As Range
+        Set modRange = mapWs.Range("P4:P1000")
+        destWs.Cells(destRow, "E").value = TranslateList(sourceWs.Cells(sourceRow, "D").value, modRange, mapWs, "Q", Chr(10))
+        'Column F/Item 728: Diagnosis Modifier
+        destWs.Cells(destRow, "F").value = RelatedMultiResp(sourceWs.Cells(sourceRow, "E").value, "~", "^", Chr(10), ";")
+        'Column G/Item 1850: Injury Codes
+        destWs.Cells(destRow, "G").value = MultiResp(sourceWs.Cells(sourceRow, "F").value, "~", Chr(10), "{{EXTID}}")
+        
+        'Handled by MPI Lookup on .1
+        '---------------------------------------------
+        'Column I/Item 3000: MPI ID Type
+        'destWs.Cells(destRow, "I").value = LEGACY_HAR
+        'Column J/Item 3001: MPI ID
+        'destWs.Cells(destRow, "J").value = destRow
+        '---------------------------------------------
+        
+        'Column M/Item 7040: Admission type
+        destWs.Cells(destRow, "M").value = AkutPlanMap(sourceWs.Cells(sourceRow, "G").value)
+        'Column N/Item 11005: Start Instant
+        ' For H/HA/HI/HF kontakts, the HAR should be "not yet started"
+        If Len(kontaktId) > 0 Then
+            destWs.Cells(destRow, "N").value = GO_LIVE_INSTANT
+        End If
+        'Column O/Item 11020: Responsible Department
+        destWs.Cells(destRow, "O").value = GetMPI(sourceWs.Cells(sourceRow, "I").value, 114)
+        'Column P/Item 11021: Responsible Unit
+        Dim opRange As Range
+        Set opRange = mapWs.Range("N4:N10000")
+        destWs.Cells(destRow, "P").value = TranslateList(sourceWs.Cells(sourceRow, "J").value, opRange, mapWs, "O", Chr(10))
+        'Column Q/Item 11022: Patient Stay Location (Ophold)
+        opHold = sourceWs.Cells(sourceRow, "K").value
+        opHold = TranslateList(opHold, opRange, mapWs, "N", Chr(10))
+        If Len(opHold) > 0 Then
+            destWs.Cells(destRow, "Q").value = opHold
+        End If
+        'Column R/Item 11030: Linked Admin Pathway
+        'destWs.Cells(destRow, "R").value = GetMPI(sourceWs.Cells(sourceRow, "L").value, LEGACY_HSB)
+        'Column S/Item 11035: Linked Referral
+        If Left(kontaktType, 1) = "H" Then
+            destWs.Cells(destRow, "S").value = "{{EXTID}}" + sourceWs.Cells(sourceRow, "M").value
+        End If
+        'Column T/Item 11036: Referral Source
+        destWs.Cells(destRow, "T").value = RefSourceMap(kontaktType)
+        'Column U/Item 11037: Referring Facility
+        'Column V/Item 11040: Account Referral Start Date
+        If sourceWs.Cells(sourceRow, "A").value = "A" Or sourceWs.Cells(sourceRow, "A").value = "F" Then
+            destWs.Cells(destRow, "U").value = destWs.Cells(destRow, "O").value
+            destWs.Cells(destRow, "V").value = GO_LIVE
+        End If
+        'Column W/Item 11042: Account Referral Diagnosis
+        '   Look to referral spreadsheet and grab referral diagnoses
+        Dim refEDG As String
+        If Left(kontaktType, 1) = "H" Then
+            Dim outRflRange As Range
+            If Len(sourceWs.Cells(sourceRow, "Z").value) > 0 Then
+                destWs.Cells(destRow, "W").value = "{{EXTID}}" & sourceWs.Cells(sourceRow, "Z").value
+            ElseIf FindValue(sourceWs.Cells(sourceRow, "M").value, rfl_ws.Range("A:A"), outRflRange) Then
+                refEDG = rfl_ws.Cells(outRflRange.row, "I").value
+                If Len(refEDG) <= 0 Then
+                    destWs.Cells(destRow, "W").value = "DEFAULT_EDG"
+                Else
+                    destWs.Cells(destRow, "W").value = "{{EXTID}}" & refEDG
+                End If
+            Else
+                Call LogError("RFL;11042", sourceWs.Cells(sourceRow, "X"), "Could not find a referral to get the diagnosis from.")
+            End If
+        End If
+        'Column X/Item 11100: Payment Condition - Payor
+        Dim payorRange As Range
+        Dim payorVal As String
+        Set payorRange = mapWs.Range("I4:I149")
+        payorVal = TranslateList("," & sourceWs.Cells(sourceRow, "Q").value & ",", payorRange, mapWs, "J", Chr(10))
+        If Len(payorVal) > 0 Then
+            destWs.Cells(destRow, "X").value = payorVal
+        End If
+        'Column Y/Item 11101: Payment Condition - Payment Agreement
+        Dim pagRange As Range
+        Dim pagVal As String
+        Set pagRange = mapWs.Range("K4:K43")
+        pagVal = TranslateList(sourceWs.Cells(sourceRow, "R").value, pagRange, mapWs, "L", Chr(10))
+        If Len(pagVal) > 0 Then
+            If pagVal = "1516600" And payorVal = "84" Then
+                'If the payor is capital and we're type 600, then just make the agreement capital PAG
+                destWs.Cells(destRow, "Y").value = "1516084"
+            Else
+                destWs.Cells(destRow, "Y").value = pagVal
+            End If
+        End If
+        'Column Z/Item 11102: Payment Condition - Start Date
+        destWs.Cells(destRow, "Z").value = TranslateDates(sourceWs.Cells(sourceRow, "S").value, False, Chr(10))
+        'Column AA/Item 11103: Payment Condition - End Date
+        destWs.Cells(destRow, "AA").value = TranslateDates(sourceWs.Cells(sourceRow, "T").value, False, Chr(10))
+        'Column AB/Item 11104: Payment Condition - Is Guaranteed?
+        destWs.Cells(destRow, "AB").value = IsGuaranteedMap(sourceWs.Cells(sourceRow, "U").value)
+        'Column AC/Item 11105: Payment Condition - Is Approved?
+        destWs.Cells(destRow, "AC").value = IsApprovedMap(sourceWs.Cells(sourceRow, "V").value)
+        'Column AD/Item 11106: Payment Condition - Guaranteed End Date
+        destWs.Cells(destRow, "AD").value = TranslateDates(sourceWs.Cells(sourceRow, "W").value, False, Chr(10))
+        'Column AE/Item 11107: Payment Condition - Level of Service
+        destWs.Cells(destRow, "AE").value = TranslateList(sourceWs.Cells(sourceRow, "R").value, pagRange, mapWs, "M", Chr(10))
+        'Column AF/Item 11109: Payment Condition - Comment
+        payComment = sourceWs.Cells(sourceRow, "Y").value
+        If Len(payComment) > 127 Then
+            'destWs.Cells(destRow, "AF").value = Left(sourceWs.Cells(sourceRow, "Y").value, 128)
+            'Call LogError("HAR", CStr(kontaktId), "Payment comments are longer than 128 characters. Cut off to 128")
+        Else
+            'destWs.Cells(destRow, "AF").value = sourceWs.Cells(sourceRow, "Y").value
+        End If
+        
+        'Column AG/Item 11110: Psych Starting Condition IP
+        'Column AH/Item 11111: Psych Starting Condition OP
+        'Column AI/Item 11112: Psych Kontakt
+        destWs.Cells(destRow, "AH").value = IsPsychMap(sourceWs.Cells(sourceRow, "P").value)
+        
+        'Column AI/Item 100000: Linked Admin Pathway
+        destWs.Cells(destRow, "AI").value = sourceWs.Cells(sourceRow, "L").value
+        'Column AJ/Item 100001: Linked Admin Pathway Issuing Org
+        destWs.Cells(destRow, "AJ").value = 10 ' Region Hovedstaden
+        
+        'Increment
+        destRow = destRow + 1
+NextHAR:
+        sourceRow = sourceRow + 1
+    Loop
+End Sub
+
+Sub FindPathwayPeriods(ByVal mapWs As Worksheet, ByVal sourceWs As Worksheet, ByVal rowIndex As Long, ByRef result As String)
+    
+    'For HGH, this logic won't be used
+    '------------------------------------------------------
+    'Loop through each procedure code and also get the date
+    '   "~" is the delimiter
+    '   Column I (9) - Procedure Code
+    '   Column J (10) - Procedure Code Date
+    'Dim procAry, procDateAry As Variant
+    'Dim intCount As Long
+    'Dim procCode, procDate As String
+    'procAry = Split(CStr(sourceWs.Cells(rowIndex, 9).value), "~")
+    'procDateAry = Split(CStr(sourceWs.Cells(rowIndex, 10).value), "~")
+    '
+    'Dim foundRange As Range
+    'Dim addPeriod, remPeriod As String
+    'For intCount = LBound(procAry) To UBound(procAry)
+    '    'Procedure Code could potentially be empty but delimited
+    '    If Len(procAry(intCount)) <= 0 Then
+    '        GoTo NextIteration
+    '    'Otherwise, find where this is
+    '    Else
+    '        If FindValue(procAry(intCount), mapWs.Range("A3:B41"), foundRange) Then
+    '            'From result, decide whether to remove or add
+    '            If foundRange.Column = 1 Then
+    '                'Add the value to some metric
+    '                addPeriod = addPeriod + "~" + CStr(mapWs.Cells(foundRange.row, "C").value)
+    '            Else
+    '                'Remove the value from some metric
+    '                remPeriod = remPeriod + "~" + CStr(mapWs.Cells(foundRange.row, "C").value)
+    '            End If
+    '
+    '        Else
+    '            Call LogError("HSB;30", CStr(sourceWs.Cells(rowIndex, 1).value), "No Procedure code (" + procAry(intCount) + ") found in table")
+    '        End If
+    '    End If
+'NextIteration:
+    'Next
+    
+    ''Now resolve procedure codes into values
+    'Dim addCount, remCount As Long
+    'Dim addAry, remAry As Variant
+    'addAry = Split(addPeriod, "~")
+    'remAry = Split(remPeriod, "~")
+    'For addCount = LBound(addAry) To UBound(addAry)
+    '    For remCount = LBound(remAry) To UBound(remAry)
+    '        If addAry(addCount) = remAry(remCount) Then
+    '            addAry(addCount) = ""
+    '        End If
+    '    Next
+    '    If Not Len(addAry(addCount)) > 0 Then
+    '        result = result + "~" + CStr(addAry(addCount))
+    '    End If
+    'Next
+    '------------------------------------------------------
+    
+    'Non-primary pathway periods
+    '   Referral ID is linked through column D in HSB
+    Dim hsb_rflID, brevId As String
+    Dim outRfl As Range
+    hsb_rflID = sourceWs.Cells(rowIndex, "D").value
+    If FindValue(hsb_rflID, rfl_ws.Range("A:A"), outRfl) Then
+        brevId = rfl_ws.Cells(outRfl.row, "L").value
+        If Len(brevId) <= 0 Then
+            GoTo SkipBrevId
+        End If
+        Dim brevAry As Variant
+        Dim lastBrevId As String
+        Dim foundU, foundA, foundB As Boolean
+        brevAry = Split(brevId, "~")
+        lastBrevId = Left(CStr(brevAry(UBound(brevAry))), 1)
+        If lastBrevId = "A" Then
+            foundA = True
+        ElseIf lastBrevId = "B" Then
+            foundB = True
+        ElseIf lastBrevId = "U" Then
+            foundU = True
+        Else
+            Call LogError("HSB", sourceWs.Cells(rowIndex, "A"), "Brev ID not an A, B, or U")
+        End If
+        'If AFX01D is on the pathway, then don't add the Udredningsret
+        If foundU Then
+            If InStr(sourceWs.Cells(rowIndex, "I").value, "AFX01D") > 0 Then
+                foundU = False
+            End If
+        End If
+        'If HAR not open, then don't add the Behandlings 30/60
+        Dim throwAway As Range
+        If Not FindValue(hsb_rflID, har_ws.Range("M:M"), throwAway) Then
+            'Can't have both of these at this point, so just clear them all
+            foundA = False
+            foundB = False
+        End If
+        If foundU Then result = result + "~" + "3100002"
+        If foundA Then result = result + "~" + "3100046"
+        If foundB Then result = result + "~" + "3100048"
+SkipBrevId:
+    End If
+    'Finally let's check our Maksimaleventetider
+    If Not outRfl Is Nothing Then
+        If InStr(rfl_ws.Cells(outRfl.row, "I").value, "DZ03") Then
+            'Can't have a started F, A, or I (or the opposite - can have an H)
+            Dim harRange As Range
+            'Find the referral ID in the HAR/Kontakt data and see if there's an "H"
+            If FindValue(hsb_rflID, har_ws.Range("M:M"), harRange) Then
+                If InStr(har_ws.Cells(harRange.row, "A").value, "H") Then
+                    result = result + "~" + "3100001"
+                End If
+            End If
+        End If
+    Else
+        Call LogError("HSB;30", sourceWs.Cells(rowIndex, "A").value, "Unable to find Referral: " + hsb_rflID + " in the referral extract")
+    End If
+
+    
+    
+    'If nothing, make it a conversion pathway
+    If Len(Replace(result, "~", "")) <= 0 Then
+        result = "~3100052"
+    End If
+    
+End Sub
+
+Function AddPathwayPeriods(ByVal destWs As Worksheet, ByVal destRow As Long, resultStr As String) As Long
+    Dim pathwayPeriods As Variant
+    Dim pathwayCount As Integer
+    'Will always be at least 1
+    pathwayPeriods = Split(resultStr, "~")
+    For pathwayCount = LBound(pathwayPeriods) To UBound(pathwayPeriods)
+        If Len(pathwayPeriods(pathwayCount)) <= 0 Then
+            GoTo PathwayNext
+        Else
+            If Len(destWs.Cells(destRow, "B").value) > 0 Then
+                AddPathwayPeriods = AddPathwayPeriods + 1
+                destWs.Cells(destRow, "B").Offset(1).EntireRow.Insert
+                destRow = destRow + 1
+                destWs.Cells(destRow, "U").value = 0 'New rows do not have Parent Info
+                destWs.Cells(destRow, "F").value = destRow
+                destWs.Cells(destRow, "I").value = destWs.Cells(destRow - 1, "I")
+                destWs.Cells(destRow, "T").value = destWs.Cells(destRow - 1, "T")
+                destWs.Cells(destRow, "V").value = destWs.Cells(destRow - 1, "V")
+                destWs.Cells(destRow, "W").value = destWs.Cells(destRow - 1, "W")
+                'Fill in remaining duplicates
+                destWs.Cells(destRow, "A").value = GetMPI(CStr(destRow), LEGACY_HSB)
+                destWs.Cells(destRow, "C").value = 1
+                destWs.Cells(destRow, "D").value = REGION
+                destWs.Cells(destRow, "E").value = LEGACY_HSB
+                destWs.Cells(destRow, "B").value = pathwayPeriods(pathwayCount)
+            Else
+                destWs.Cells(destRow, "B").value = pathwayPeriods(pathwayCount)
+                destWs.Cells(destRow, "U").value = 1 'Yes, contains Parent Info
+            End If
+        End If
+PathwayNext:
+    Next
+End Function
+
+Function FindValue(ByVal value As String, ByRef inRange As Range, ByRef outRange As Range) As Boolean
+    With inRange
+        Set outRange = inRange.Find(What:=value, _
+                        LookIn:=xlValues, _
+                        LookAt:=xlPart, _
+                        SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, _
+                        MatchCase:=False)
+        If Not outRange Is Nothing Then
+            FindValue = True
+        Else
+            FindValue = False
+        End If
+    End With
+End Function
+
+Sub LogError(fileType As String, id As String, message As String)
+    
+    ERROR_COUNT = ERROR_COUNT + 1
+    Application.ThisWorkbook.Sheets("errors").Cells(ERROR_COUNT, 1) = fileType
+    Application.ThisWorkbook.Sheets("errors").Cells(ERROR_COUNT, 2) = id
+    Application.ThisWorkbook.Sheets("errors").Cells(ERROR_COUNT, 3) = message
+    
+    
+End Sub
+
+Function GetMPI(id As String, ByVal iit_descriptor As String) As String
+    If IsNumeric(iit_descriptor) Then
+        GetMPI = "{{MPI}}" + id + ",-1," + iit_descriptor
+    Else
+        GetMPI = "{{MPI}}" + id + ",""DK_ORG_ID""," + """" + iit_descriptor + """"
+    End If
+End Function
+
+Function GetCPR(id As String) As String
+    If IsNumeric(id) Then
+        GetCPR = GetMPI(id, 1000)
+    Else
+        GetCPR = GetMPI(id, 1002)
+    End If
+End Function
+
+Function TranslateList(ByVal list As String, ByRef inRange As Range, ByRef mapWs As Worksheet, ByVal resCol As String, ByVal delim As String) As String
+    If Len(list) <= 0 Then Exit Function
+    Dim listAry As Variant
+    Dim listCount As Integer
+    Dim curItem As String
+    Dim outRange As Range
+    listAry = Split(list, "~")
+    For listCount = LBound(listAry) To UBound(listAry)
+        curItem = CStr(listAry(listCount))
+        Set outRange = Nothing
+        If FindValue(curItem, inRange, outRange) Then
+            If Len(TranslateList) <= 0 Then
+                TranslateList = CStr(mapWs.Cells(outRange.row, resCol).value)
+            Else
+                TranslateList = TranslateList + delim + CStr(mapWs.Cells(outRange.row, resCol).value)
+            End If
+        Else
+            Call LogError("HSB", "Unknown", "Unable to map " + curItem)
+        End If
+    Next
+End Function
+
+Function TranslateDates(ByVal dateList As String, Optional Instant As Boolean, Optional ByVal delim As String) As String
+    If Len(dateList) <= 0 Then Exit Function
+    Dim dateAry As Variant
+    Dim dateCount As Integer
+    Dim curItem, result As String
+    dateAry = Split(dateList, "~")
+    For dateCount = LBound(dateAry) To UBound(dateAry)
+        curItem = CStr(dateAry(dateCount))
+        If Not Instant Then
+            result = Right(curItem, 2) + Right(Left(curItem, 6), 2) + Left(curItem, 4)
+        Else
+            result = Right(Left(curItem, 8), 2) + Right(Left(curItem, 6), 2) + Left(curItem, 4) + "^" + Right(curItem, 4)
+        End If
+        
+        If Len(TranslateDates) <= 0 Then
+            TranslateDates = result
+        Else
+            TranslateDates = TranslateDates + delim + result
+        End If
+    Next
+    
+End Function
+
+Function RefSrcTypeMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "N/A"
+            RefSrcTypeMap = "0"
+        Case "PL"
+            RefSrcTypeMap = "1"
+        Case "PS"
+            RefSrcTypeMap = "2"
+        Case "AN"
+            RefSrcTypeMap = "3"
+        Case "b"
+            RefSrcTypeMap = "4"
+        Case "UD"
+            RefSrcTypeMap = "5"
+        Case "HS"
+            RefSrcTypeMap = "6"
+        Case "HV"
+            RefSrcTypeMap = "7"
+        Case Else
+            RefSrcTypeMap = "0"
+    End Select
+End Function
+
+Function TransMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "N"
+            TransMap = "1"
+        Case "J"
+            TransMap = "3"
+        Case Else
+            TransMap = ""
+    End Select
+End Function
+
+Function RflTreatTypeMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case Else
+            RflTreatTypeMap = "3 - ???"
+    End Select
+End Function
+
+Function AcctClassMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "A", "F", "HA", "HF", "H"
+            AcctClassMap = "102"
+        Case "I", "HI"
+            AcctClassMap = "101"
+        Case Else
+            AcctClassMap = "???"
+    End Select
+End Function
+
+Function DiagTypeMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "A"
+            DiagTypeMap = "1"
+        Case "B"
+            DiagTypeMap = "2"
+        Case Else
+            DiagTypeMap = "???"
+    End Select
+End Function
+
+Function AkutPlanMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "A"
+            AkutPlanMap = "1"
+        Case Else
+            AkutPlanMap = "2"
+    End Select
+End Function
+
+Function RefSourceMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "A", "HF", "HA"
+            RefSourceMap = "6"
+        Case "F", "HI"
+            RefSourceMap = "7"
+        Case "H"
+            RefSourceMap = ""
+        Case Else
+            RefSourceMap = "???"
+    End Select
+End Function
+
+Function EncounterTypeMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "HI"
+            EncounterTypeMap = "2"
+        Case "HA", "HF", "H"
+            EncounterTypeMap = "1"
+        Case Else
+            EncounterTypeMap = "???"
+    End Select
+End Function
+
+Function WaitStatusMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "Ø"
+            WaitStatusMap = "1108"
+        Case "I"
+            WaitStatusMap = "1106"
+        Case "K"
+            WaitStatusMap = "1107"
+        Case "M"
+            WaitStatusMap = "1109"
+        Case "U"
+            WaitStatusMap = "1110"
+        Case "1"
+            WaitStatusMap = "1101"
+        Case "2"
+            WaitStatusMap = "1102"
+        Case "3"
+            WaitStatusMap = "1103"
+        Case "4"
+            WaitStatusMap = "1104"
+        Case "5"
+            WaitStatusMap = "1105"
+        Case Else
+            WaitStatusMap = "1112"
+    End Select
+End Function
+
+Function IsGuaranteedMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "OK"
+            IsGuaranteedMap = "1"
+        Case "UK"
+            IsGuaranteedMap = "4"
+        Case "Høring"
+            IsGuaranteedMap = "2"
+        Case Else
+            IsGuaranteedMap = ""
+    End Select
+End Function
+
+Function IsApprovedMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "A"
+            IsApprovedMap = "4"
+        Case "G"
+            IsApprovedMap = "1"
+        Case "S"
+            IsApprovedMap = "2"
+        Case Else
+            IsApprovedMap = ""
+    End Select
+End Function
+
+Function IsPsychMap(ByVal toMap As String) As String
+    Select Case toMap
+        Case "J"
+            IsPsychMap = "0"
+        Case "N"
+            IsPsychMap = "1"
+        Case Else
+            IsPsychMap = "???"
+    End Select
+End Function
+
+Function MultiResp(inputStr As String, inDelim As String, outDelim As String, Optional prefix As String) As String
+        Dim inputAry As Variant
+        Dim inputCount As Integer
+        Dim result As String
+        result = ""
+        inputAry = Split(inputStr, inDelim)
+        For inputCount = LBound(inputAry) To UBound(inputAry)
+            If Len(CStr(inputAry(inputCount))) <= 0 Then
+                GoTo NextMulti
+            End If
+            If Len(result) <= 0 Then
+                result = prefix + CStr(inputAry(inputCount))
+            Else
+                result = result + outDelim + prefix + CStr(inputAry(inputCount))
+            End If
+NextMulti:
+        Next
+        MultiResp = result
+End Function
+Function TransMultiResp(inputStr As String, inDelim As String, outDelim As String, Optional prefix As String, Optional transRange As Range) As String
+        Dim inputAry As Variant
+        Dim inputCount As Integer
+        Dim result As String
+        Dim foundValRange As Range
+        result = ""
+        inputAry = Split(inputStr, inDelim)
+        For inputCount = LBound(inputAry) To UBound(inputAry)
+            If Len(CStr(inputAry(inputCount))) <= 0 Then
+                GoTo NextTransMulti
+            End If
+            If Len(result) <= 0 Then
+                If FindValue(inputAry(inputCount), transRange, foundValRange) Then
+                    result = prefix + mapWs.Cells(foundValRange.row, foundValRange.Column + 1).value
+                Else
+                    Call LogError("Translation", CStr(inputAry(inputCount)), "Could not translate value")
+                End If
+            Else
+                If FindValue(inputAry(inputCount), transRange, foundValRange) Then
+                    result = result + outDelim + prefix + mapWs.Cells(foundValRange.row, foundValRange.Column + 1).value
+                Else
+                    Call LogError("Translation", CStr(inputAry(inputCount)), "Could not translate value")
+                End If
+            End If
+NextTransMulti:
+        Next
+        TransMultiResp = result
+End Function
+
+Function RelatedMultiResp(inputStr As String, inDelim As String, inDelim2 As String, outDelim As String, outDelim2 As String, Optional prefix As String) As String
+        Dim inputAry, inputAry2 As Variant
+        Dim inputCount, inputCount2, count As Integer
+        Dim result, result2 As String
+        result = ""
+        result2 = ""
+        inputAry = Split(inputStr, inDelim)
+        For inputCount = LBound(inputAry) To UBound(inputAry)
+            inputAry2 = ""
+            inputCount2 = 0
+            result2 = ""
+            If Len(CStr(inputAry(inputCount))) <= 0 Then
+                GoTo NextRelMulti
+            End If
+            inputAry2 = Split(inputAry(inputCount), inDelim2)
+            count = 0
+            For inputCount2 = LBound(inputAry2) To UBound(inputAry2)
+                If Len(CStr(inputAry2(inputCount2))) <= 0 Then
+                    GoTo NextRelMulti2
+                End If
+                count = count + 1
+                If Len(result2) <= 0 Then
+                    result2 = prefix + CStr(inputAry2(inputCount2))
+                Else
+                    result2 = result2 + outDelim2 + prefix + CStr(inputAry2(inputCount2))
+                End If
+NextRelMulti2:
+            Next
+            result2 = CStr(count) + outDelim2 + result2
+NextRelMulti:
+            If Len(result2) <= 0 Then
+                result2 = "1" + outDelim2
+            End If
+            
+            If Len(result) <= 0 Then
+                result = result2
+            Else
+                result = result + outDelim + result2
+            End If
+        Next
+        RelatedMultiResp = result
+End Function
+
+Sub AddToStar()
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("mapping")
+    Dim row As Integer
+    Dim result As String
+    For row = 3 To 39
+        Dim codeAry As Variant
+        Dim codeCount As Integer
+        codeAry = Split(ws.Cells(row, "B").value, ",")
+        result = ""
+        For codeCount = LBound(codeAry) To UBound(codeAry)
+            If Right(codeAry(codeCount), 1) = "*" Then
+                Dim count As Integer
+                For count = 1 To 9
+                    If Len(ws.Cells(row, "J").value) <= 0 Then
+                        result = result + Split(codeAry(codeCount), "*")(0) + CStr(count) + ","
+                    Else
+                        result = result + Split(codeAry(codeCount), "*")(0) + CStr(count) + ","
+                    End If
+                Next
+            Else
+                result = result + "," + CStr(codeAry(codeCount))
+            End If
+            result = result + ","
+        Next
+        ws.Cells(row, "J").value = result
+    Next
+End Sub
+Sub FindValues()
+    Dim ws As Worksheet
+    Dim sourceRow As Long
+    Dim outRange As Range
+    Set ws = ThisWorkbook.Sheets("test")
+    Set rfl_ws = ThisWorkbook.Sheets("rfl_src") 'rfl_wb.Sheets(1)
+    Set hsb_ws = ThisWorkbook.Sheets("hsb_src") 'hsb_wb.Sheets(1)
+    Set har_ws = ThisWorkbook.Sheets("har_src") 'har_wb.Sheets(1)
+    
+    
+    ' Remove wrong RFLs
+    sourceRow = 2
+    Do While Len(rfl_ws.Cells(sourceRow, "D").value) > 0
+        If Not FindValue(rfl_ws.Cells(sourceRow, "D").value, ws.Range("A:A"), outRange) Then
+            rfl_ws.Cells(sourceRow, "D").EntireRow.Delete
+        Else
+            sourceRow = sourceRow + 1
+        End If
+        
+    Loop
+    
+    ' Remove wrong HSBs
+    sourceRow = 2
+    Do While Len(hsb_ws.Cells(sourceRow, "H").value) > 0
+        If Not FindValue(hsb_ws.Cells(sourceRow, "H").value, ws.Range("A:A"), outRange) Then
+            hsb_ws.Cells(sourceRow, "H").EntireRow.Delete
+        Else
+            sourceRow = sourceRow + 1
+        End If
+    Loop
+    
+    ' Remove wrong HARs
+    sourceRow = 2
+    Do While Len(har_ws.Cells(sourceRow, "B").value) > 0
+        If Not FindValue(har_ws.Cells(sourceRow, "B").value, ws.Range("A:A"), outRange) Then
+            har_ws.Cells(sourceRow, "B").EntireRow.Delete
+        Else
+            sourceRow = sourceRow + 1
+        End If
+    Loop
+    
+End Sub
